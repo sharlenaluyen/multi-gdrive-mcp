@@ -180,3 +180,22 @@ test("explainDriveError explains drive.file's limited view on a 404, only when t
   const e3 = explainDriveError(Object.assign(new Error("Bad request"), { code: 400 }), fileOnly);
   assert.equal(e3.message, "Bad request");
 });
+
+test("explainDriveError on a write says drive.readonly won't help, whatever the account granted", () => {
+  const fileOnly = { alias: "work", scopes: [`${G}drive.file`] };
+  const whole = { alias: "work", scopes: [`${G}drive.file`, `${G}drive.readonly`] };
+  for (const info of [fileOnly, whole]) {
+    for (const code of [403, 404]) {
+      const err = explainDriveError(Object.assign(new Error("Insufficient permissions."), { code }), info, {
+        write: true,
+      });
+      assert.match(err.message, /^Insufficient permissions\. - .*only files .* that they created themselves/);
+      assert.match(err.message, /even with drive\.readonly/);
+      assert.doesNotMatch(err.message, /--with-drive-readonly/);
+    }
+  }
+  const other = explainDriveError(Object.assign(new Error("Bad request"), { code: 400 }), whole, {
+    write: true,
+  });
+  assert.equal(other.message, "Bad request");
+});

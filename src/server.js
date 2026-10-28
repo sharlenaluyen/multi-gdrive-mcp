@@ -67,12 +67,13 @@ const defineTool = createToolDefiner(server, TOOL_ANNOTATIONS);
 const fileId = z.string().regex(FILE_ID, "not a Drive file id").describe("Drive file id from search_files");
 
 // Runs a Drive call, adding the "drive.file can't see that" explanation to a
-// 404/403 so it isn't mistaken for a missing file.
-async function driveCall(info, fn) {
+// 404/403 so it isn't mistaken for a missing file. Pass { write: true } for the
+// lookup a write tool does first, so the hint is about changing the file.
+async function driveCall(info, fn, { write = false } = {}) {
   try {
     return await fn();
   } catch (err) {
-    throw explainDriveError(err, info);
+    throw explainDriveError(err, info, { write });
   }
 }
 
@@ -84,7 +85,7 @@ function writeError(action, info, detail, err) {
     outcome: "error",
     detail: { ...detail, error: err?.message },
   });
-  return explainDriveError(err, info);
+  return explainDriveError(err, info, { write: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -286,14 +287,17 @@ defineTool(
     if (replace_file_id) {
       if (folder_id || name)
         throw new Error("folder_id and name only apply to new uploads, not replace_file_id.");
-      const { data: target } = await driveCall(info, () =>
-        withRetry(() =>
-          drive.files.get({
-            fileId: replace_file_id,
-            fields: `${FILE_FIELDS}, permissions(type, role, emailAddress, domain)`,
-            supportsAllDrives: true,
-          })
-        )
+      const { data: target } = await driveCall(
+        info,
+        () =>
+          withRetry(() =>
+            drive.files.get({
+              fileId: replace_file_id,
+              fields: `${FILE_FIELDS}, permissions(type, role, emailAddress, domain)`,
+              supportsAllDrives: true,
+            })
+          ),
+        { write: true }
       );
       if (isGoogleNative(target.mimeType)) {
         throw new Error(
@@ -378,14 +382,17 @@ defineTool(
   async ({ account, file_id, confirm_trash }) => {
     const info = getAccountInfo(account);
     const drive = driveClientFor(account);
-    const { data: target } = await driveCall(info, () =>
-      withRetry(() =>
-        drive.files.get({
-          fileId: file_id,
-          fields: `${FILE_FIELDS}, permissions(type, role, emailAddress, domain)`,
-          supportsAllDrives: true,
-        })
-      )
+    const { data: target } = await driveCall(
+      info,
+      () =>
+        withRetry(() =>
+          drive.files.get({
+            fileId: file_id,
+            fields: `${FILE_FIELDS}, permissions(type, role, emailAddress, domain)`,
+            supportsAllDrives: true,
+          })
+        ),
+      { write: true }
     );
     const detail = { file_id, mime_type: target.mimeType, shared: target.shared };
     if (!confirm_trash) {
@@ -457,14 +464,17 @@ defineTool(
       throw new Error("message is only delivered in the notification email; set notify: true or drop it.");
     const info = getAccountInfo(account);
     const drive = driveClientFor(account);
-    const { data: target } = await driveCall(info, () =>
-      withRetry(() =>
-        drive.files.get({
-          fileId: file_id,
-          fields: `${FILE_FIELDS}, permissions(type, role, emailAddress, domain)`,
-          supportsAllDrives: true,
-        })
-      )
+    const { data: target } = await driveCall(
+      info,
+      () =>
+        withRetry(() =>
+          drive.files.get({
+            fileId: file_id,
+            fields: `${FILE_FIELDS}, permissions(type, role, emailAddress, domain)`,
+            supportsAllDrives: true,
+          })
+        ),
+      { write: true }
     );
     const detail = { file_id, grantee, type, role, notify };
     const warnings = shareWarnings({ role, existing: target.permissions, email: grantee });

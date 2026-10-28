@@ -39,9 +39,18 @@ export function visibilityNote(info) {
 
 // Under drive.file, a file the app never touched looks exactly like a missing
 // one (404), so say that instead of leaving a bare "File not found".
-export function explainDriveError(err, info) {
+// Changes (trash, share, replace, upload into a folder) are a different case:
+// drive.readonly adds reading only, so those work only on files these servers
+// created whatever the account granted, and suggesting the opt-in would mislead.
+export function explainDriveError(err, info, { write = false } = {}) {
   const status = err?.code || err?.response?.status;
-  if ((status === 404 || status === 403) && !canReadWholeDrive(info)) {
+  if (status !== 404 && status !== 403) return err;
+  if (write) {
+    err.message =
+      `${err.message} - These Google MCP servers can trash, share, or replace only files (and upload only into folders) that they created themselves. ` +
+      `That holds even with drive.readonly, which adds reading, not changing; full Drive access is never requested. ` +
+      `Make this change in Google Drive directly.`;
+  } else if (!canReadWholeDrive(info)) {
     err.message =
       `${err.message} - With only drive.file access, this server can reach files these Google MCP servers created or opened, not others in your Drive. ` +
       `To read other files, re-authorize this account once with: node auth.js ${info.alias} --with-drive-readonly (in google-mcp-accounts).`;

@@ -31,9 +31,12 @@ node auth.js work --with-drive-readonly
 ```
 
 `list_accounts` and every `search_files` result say which mode the account
-is in. When a file isn't reachable under `drive.file`, the error names the
-exact command above rather than leaving a bare 404. The full `drive` scope
-(read **and write** everything) is never requested.
+is in. When a file can't be **read** under `drive.file`, the error names the
+exact command above rather than leaving a bare 404. When a **change** (trash,
+share, replace, or upload into a folder) is refused, the error says instead
+that these servers only change files they created, and that `drive.readonly`
+won't help, so you're not sent to an opt-in that can't fix it. The full
+`drive` scope (read **and write** everything) is never requested.
 
 ## Tools
 
