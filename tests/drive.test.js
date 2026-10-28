@@ -20,6 +20,8 @@ import {
   explainDriveError,
   canReadWholeDrive,
   FILE_ID,
+  assertFileName,
+  moveParams,
 } from "../src/drive.js";
 
 const G = "https://www.googleapis.com/auth/";
@@ -198,4 +200,17 @@ test("explainDriveError on a write says drive.readonly won't help, whatever the 
     write: true,
   });
   assert.equal(other.message, "Bad request");
+});
+
+test("assertFileName trims and refuses blank, overlong, or multi-line names", () => {
+  assert.equal(assertFileName("  Q4 Plans "), "Q4 Plans");
+  for (const bad of ["", "   ", "a\nb", "tab\there", "x".repeat(256)]) {
+    assert.throws(() => assertFileName(bad));
+  }
+});
+
+test("moveParams removes every current parent except the destination", () => {
+  assert.deepEqual(moveParams(["a", "b"], "c"), { addParents: "c", removeParents: "a,b" });
+  assert.deepEqual(moveParams(["a", "c"], "c"), { addParents: "c", removeParents: "a" });
+  assert.deepEqual(moveParams(undefined, "c"), { addParents: "c" });
 });

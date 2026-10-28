@@ -12,7 +12,7 @@ import {
   createAuditLogger,
   statRegularFile,
 } from "google-mcp-accounts";
-import { createToolDefiner, jsonResult, aliasEnumHint, UNTRUSTED_NOTICE } from "./mcp.js";
+import { createToolDefiner, jsonResult, aliasEnumHint, markUntrusted, UNTRUSTED_NOTICE } from "./mcp.js";
 import { FILES_DIR, resolveReadablePath, resolveWritablePath } from "./files.js";
 import {
   driveClientFor,
@@ -29,7 +29,11 @@ import {
   summarizeFile,
   summarizePermissions,
   shareWarnings,
+  assertFileName,
+  moveParams,
   FILE_ID,
+  FOLDER_MIME,
+  MAX_NAME_LENGTH,
   FILE_FIELDS,
   EXPORT_FORMATS,
   SHARE_ROLES,
@@ -58,6 +62,12 @@ const TOOL_ANNOTATIONS = {
   // Can replace an existing Drive file's contents (only with confirm_overwrite).
   upload_file: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   move_to_trash: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  // Only adds an empty folder; touches nothing that exists.
+  create_folder: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  // Changes what collaborators see; the old name is returned so it can be put back.
+  rename_file: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  // Moving into or out of a shared folder changes who can open the file.
+  move_file: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   // Gives another person access to your file and usually emails them - as
   // irreversible in practice as send_email (they may copy it right away).
   share_file: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
@@ -362,6 +372,177 @@ defineTool(
       return jsonResult({ created: summarizeFile(data) });
     } catch (err) {
       throw writeError("upload_file", info, detail, err);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Organize
+// ---------------------------------------------------------------------------
+
+defineTool(
+  "create_folder",
+  `Create a new, empty folder in Drive (in My Drive, or inside parent_folder_id). Runs immediately - it doesn't touch anything that exists and notifies nobody. Under drive.file, a parent folder must be one these servers created.${aliasEnumHint()}`,
+  {
+    account: z.string(),
+    name: z.string().max(MAX_NAME_LENGTH),
+    parent_folder_id: z
+      .string()
+      .regex(FILE_ID, "not a Drive folder id")
+      .optional()
+      .describe("Folder to create it in. Defaults to My Drive."),
+  },
+  async ({ account, name, parent_folder_id }) => {
+    const folderName = assertFileName(name);
+    const info = getAccountInfo(account);
+    const drive = driveClientFor(account);
+    const detail = { name: folderName, parent_folder_id };
+    try {
+      // Not retried: a retry after a timeout could create a duplicate folder.
+      const { data } = await drive.files.create({
+        requestBody: {
+          name: folderName,
+          mimeType: FOLDER_MIME,
+          ...(parent_folder_id ? { parents: [parent_folder_id] } : {}),
+        },
+        fields: FILE_FIELDS,
+        supportsAllDrives: true,
+      });
+      logAuditEvent({
+        action: "create_folder",
+        account: info.alias,
+        email: info.email,
+        outcome: "created",
+        detail: { ...detail, file_id: data.id },
+      });
+      return jsonResult({ created: summarizeFile(data) });
+    } catch (err) {
+      throw writeError("create_folder", info, detail, err);
+    }
+  }
+);
+
+defineTool(
+  "rename_file",
+  `Rename a file or folder. Runs immediately and notifies nobody, but everyone with access sees the new name; the old name is returned so it can be put back. Only works on files these servers created.${aliasEnumHint()}`,
+  { account: z.string(), file_id: fileId, new_name: z.string().max(MAX_NAME_LENGTH) },
+  async ({ account, file_id, new_name }) => {
+    const name = assertFileName(new_name);
+    const info = getAccountInfo(account);
+    const drive = driveClientFor(account);
+    const { data: target } = await driveCall(
+      info,
+      () =>
+        withRetry(() => drive.files.get({ fileId: file_id, fields: FILE_FIELDS, supportsAllDrives: true })),
+      { write: true }
+    );
+    if (target.name === name) return jsonResult({ unchanged: true, file: summarizeFile(target) });
+    const detail = { file_id, new_name: name };
+    try {
+      // Setting a name is idempotent and notifies nobody, so it's safe to retry.
+      const { data } = await withRetry(() =>
+        drive.files.update({
+          fileId: file_id,
+          requestBody: { name },
+          fields: FILE_FIELDS,
+          supportsAllDrives: true,
+        })
+      );
+      logAuditEvent({
+        action: "rename_file",
+        account: info.alias,
+        email: info.email,
+        outcome: "renamed",
+        detail,
+      });
+      return jsonResult({ renamed: summarizeFile(data), previous_name: markUntrusted(target.name) });
+    } catch (err) {
+      throw writeError("rename_file", info, detail, err);
+    }
+  }
+);
+
+defineTool(
+  "move_file",
+  `Move a file or folder into another folder (it is taken out of its current folder, not copied). Moving changes who can open it: everyone with access to the destination folder gains access, and access inherited from the old folder is lost. By default this is a DRY RUN that shows the file, the destination, and who has access to each; pass confirm_move: true only once that's been reviewed. Under drive.file, both the file and the destination folder must be ones these servers created.${aliasEnumHint()}`,
+  {
+    account: z.string(),
+    file_id: fileId,
+    folder_id: z.string().regex(FILE_ID, "not a Drive folder id").describe("Destination folder id"),
+    confirm_move: z
+      .boolean()
+      .default(false)
+      .describe("Must be explicitly true to actually move the file. False (default) returns a preview only."),
+  },
+  async ({ account, file_id, folder_id, confirm_move }) => {
+    if (file_id === folder_id) throw new Error("A folder can't be moved into itself.");
+    const info = getAccountInfo(account);
+    const drive = driveClientFor(account);
+    const getWithAccess = (id) =>
+      driveCall(
+        info,
+        () =>
+          withRetry(() =>
+            drive.files.get({
+              fileId: id,
+              fields: `${FILE_FIELDS}, permissions(type, role, emailAddress, domain)`,
+              supportsAllDrives: true,
+            })
+          ),
+        { write: true }
+      );
+    const [{ data: target }, { data: folder }] = await Promise.all([
+      getWithAccess(file_id),
+      getWithAccess(folder_id),
+    ]);
+    if (folder.mimeType !== FOLDER_MIME) throw new Error("folder_id is not a folder.");
+    if (folder.trashed) throw new Error("The destination folder is in the trash.");
+    if ((target.parents || []).length === 1 && target.parents[0] === folder_id) {
+      return jsonResult({ unchanged: true, note: "The file is already in that folder." });
+    }
+    const detail = { file_id, folder_id, from_parents: target.parents };
+
+    if (!confirm_move) {
+      logAuditEvent({
+        action: "move_file",
+        account: info.alias,
+        email: info.email,
+        outcome: "dry_run",
+        detail,
+      });
+      return jsonResult({
+        dry_run: true,
+        notice: UNTRUSTED_NOTICE,
+        would_move: summarizeFile(target),
+        file_shared_with: summarizePermissions(target.permissions),
+        into_folder: summarizeFile(folder),
+        destination_shared_with: summarizePermissions(folder.permissions),
+        note:
+          "Everyone the destination folder is shared with will be able to open this file. " +
+          "Re-call with confirm_move: true to move it.",
+      });
+    }
+    try {
+      // Setting the parents is idempotent and notifies nobody, so it's safe to retry.
+      const { data } = await withRetry(() =>
+        drive.files.update({
+          fileId: file_id,
+          ...moveParams(target.parents, folder_id),
+          requestBody: {},
+          fields: FILE_FIELDS,
+          supportsAllDrives: true,
+        })
+      );
+      logAuditEvent({
+        action: "move_file",
+        account: info.alias,
+        email: info.email,
+        outcome: "moved",
+        detail,
+      });
+      return jsonResult({ moved: summarizeFile(data) });
+    } catch (err) {
+      throw writeError("move_file", info, detail, err);
     }
   }
 );

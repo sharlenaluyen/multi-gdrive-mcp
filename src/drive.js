@@ -47,7 +47,7 @@ export function explainDriveError(err, info, { write = false } = {}) {
   if (status !== 404 && status !== 403) return err;
   if (write) {
     err.message =
-      `${err.message} - These Google MCP servers can trash, share, or replace only files (and upload only into folders) that they created themselves. ` +
+      `${err.message} - These Google MCP servers can trash, share, replace, rename, or move only files (and upload or move only into folders) that they created themselves. ` +
       `That holds even with drive.readonly, which adds reading, not changing; full Drive access is never requested. ` +
       `Make this change in Google Drive directly.`;
   } else if (!canReadWholeDrive(info)) {
@@ -63,6 +63,29 @@ export const FILE_ID = /^[A-Za-z0-9_-]{1,200}$/;
 export const MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024;
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 export const MAX_SHARE_MESSAGE_LENGTH = 1000;
+export const MAX_NAME_LENGTH = 255;
+export const FOLDER_MIME = "application/vnd.google-apps.folder";
+
+// Drive accepts almost any name, but a blank one or a control character
+// (e.g. a newline) only makes the file hard to find and the preview misleading.
+export function assertFileName(value) {
+  const name = String(value || "").trim();
+  // eslint-disable-next-line no-control-regex
+  if (!name || name.length > MAX_NAME_LENGTH || /[\u0000-\u001f\u007f]/.test(name)) {
+    throw new Error(
+      `Name must be 1-${MAX_NAME_LENGTH} characters with no line breaks or control characters.`
+    );
+  }
+  return name;
+}
+
+// The files.update arguments that put a file in exactly one folder: every
+// current parent is removed, so the file doesn't end up in two places.
+export function moveParams(currentParents, folderId) {
+  const remove = (currentParents || []).filter((p) => p !== folderId);
+  return { addParents: folderId, ...(remove.length ? { removeParents: remove.join(",") } : {}) };
+}
+
 // Deliberately strict: one plain address, no display name, no list.
 const EMAIL = /^[^\s@<>,;"()]+@[^\s@<>,;"()]+\.[^\s@<>,;"()]+$/;
 const RFC3339 = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2}))?$/;

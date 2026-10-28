@@ -22,7 +22,8 @@ What that means for each tool:
 | `search_files` | Finds only app-created/opened files | Searches the whole Drive |
 | `get_file_metadata`, `download_file` | Only app-created/opened files. Others return "not found", plus an explanation | Any file |
 | `upload_file` (new file) | Works | Works |
-| `upload_file` (replace), `move_to_trash`, `share_file` | Only app-created/opened files | **Same.** `drive.readonly` doesn't grant write access. |
+| `create_folder` | Works (into My Drive, or a folder these servers created) | Same |
+| `upload_file` (replace), `move_to_trash`, `share_file`, `rename_file`, `move_file` | Only app-created/opened files (and for `move_file`, a destination folder these servers created) | **Same.** `drive.readonly` doesn't grant write access. |
 
 To escalate one account, run this once in google-mcp-accounts:
 
@@ -33,7 +34,7 @@ node auth.js work --with-drive-readonly
 `list_accounts` and every `search_files` result say which mode the account
 is in. When a file can't be **read** under `drive.file`, the error names the
 exact command above rather than leaving a bare 404. When a **change** (trash,
-share, replace, or upload into a folder) is refused, the error says instead
+share, replace, rename, move, or upload into a folder) is refused, the error says instead
 that these servers only change files they created, and that `drive.readonly`
 won't help, so you're not sent to an opt-in that can't fix it. The full
 `drive` scope (read **and write** everything) is never requested.
@@ -47,6 +48,9 @@ won't help, so you're not sent to an opt-in that can't fix it. The full
 | `get_file_metadata` | Owners, size, link, who it's shared with, and export formats | Read-only, retried |
 | `download_file` | Saves into the files folder. Google Docs/Sheets/Slides/Drawings are exported (pdf, docx, xlsx, pptx, csv, ...) | Never overwrites unless `overwrite: true`. Writes via a temp file, so a failed download never corrupts an existing one. 100MB cap, counted on actual bytes |
 | `upload_file` | Uploads from the files folder | A **new file runs right away** and can't overwrite anything. **Replacing** an existing file (`replace_file_id`) is a dry run until `confirm_overwrite: true`, and the preview shows the file and who it's shared with. 100MB cap, checked on the real file and re-counted while streaming |
+| `create_folder` | Creates an empty folder in My Drive or inside `parent_folder_id` | Runs right away: it touches nothing that exists. Not retried, so a timeout can't create two |
+| `rename_file` | Renames a file or folder | Runs right away and notifies nobody. Returns `previous_name` so it can be put back. Retried on transient errors |
+| `move_file` | Moves a file or folder into another folder (out of its current one, not a copy) | Dry run until `confirm_move: true`. The preview shows who has access to the file **and** to the destination folder (see below) |
 | `move_to_trash` | Moves a file or folder to Trash (recoverable for 30 days) | Dry run until `confirm_trash: true` |
 | `share_file` | Grants one named person or group reader/commenter/writer access | Dry run until `confirm_share: true` (see below) |
 
@@ -71,11 +75,18 @@ won't help, so you're not sent to an opt-in that can't fix it. The full
   not auto-retried, since a retry after a timeout could create a duplicate.
   One caveat: uploading into a folder that's shared makes the file visible
   to that folder's members.
+- **`move_file` gets a dry run; `rename_file` and `create_folder` don't.**
+  Moving changes who can open a file. Everyone with access to the
+  destination folder can open it afterwards, and any access inherited from
+  the old folder is gone. That's a sharing change, so it's previewed like
+  one. Renaming and creating a folder change no one's access and are easy to
+  undo, so they run right away, like a new upload. All three are
+  audit-logged.
 - **`move_to_trash` is retried on transient errors.** Trashing is
   idempotent and notifies nobody. Sharing, uploading, and overwriting are
   never retried.
 
-Every share, trash, upload, and overwrite, including dry runs and failures,
+Every share, trash, upload, overwrite, folder creation, rename, and move, including dry runs and failures,
 is appended to `~/.google-mcp/audit.log`, tagged
 `"server": "multi-gdrive-mcp"`. File contents are never logged.
 
@@ -86,6 +97,14 @@ is appended to `~/.google-mcp/audit.log`, tagged
 resolving `../` and symlinks, so a prompt-injected call can't upload
 `~/.ssh/id_rsa` or overwrite a file elsewhere. To use a different folder,
 set `MULTI_GDRIVE_MCP_FILES_DIR` (see the config below).
+
+**To attach Drive files to emails, give this server and multi-gmail-mcp the
+same folder.** Set `MULTI_GDRIVE_MCP_FILES_DIR` and multi-gmail-mcp's
+`MULTI_GMAIL_MCP_FILES_DIR` to the same path. Then a file `download_file`
+saves is right where Gmail's `attach_document` can read it. Without this,
+"attach this Drive doc to my email" fails, because each server only reads its
+own folder. Only the config changes, no code. See "One files folder for all
+the servers" in google-mcp-accounts' README.
 
 ## Setup
 
@@ -120,13 +139,15 @@ then fully quit and reopen Claude Desktop:
     "multi-gdrive": {
       "command": "node",
       "args": ["/absolute/path/to/multi-gdrive-mcp/src/server.js"],
-      "env": { "MULTI_GDRIVE_MCP_FILES_DIR": "/Users/you/Downloads/drive-mcp" }
+      "env": { "MULTI_GDRIVE_MCP_FILES_DIR": "/Users/you/Downloads/google-mcp-files" }
     }
   }
 }
 ```
 
 The `env` line is optional. Leave it out to use `~/Downloads/drive-mcp`.
+Use the same path as multi-gmail-mcp's `MULTI_GMAIL_MCP_FILES_DIR` if you
+want to attach Drive files to emails.
 
 ## Security notes
 
