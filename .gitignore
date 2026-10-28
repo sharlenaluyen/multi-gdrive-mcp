@@ -1,0 +1,17 @@
+node_modules/
+
+# Google OAuth client secret - belongs in ~/.google-mcp/, never in the repo
+credentials.json
+client_secret*.json
+
+# Account refresh tokens and the audit log - live in ~/.google-mcp/, never
+# in the repo, in case they're ever copied here
+accounts.json
+accounts.json.*.tmp
+*.log
+
+# Local environment overrides
+.env
+.env.*
+
+.DS_Store

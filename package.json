@@ -1,0 +1,31 @@
+{
+  "name": "multi-gdrive-mcp",
+  "version": "1.0.0",
+  "description": "Local MCP server exposing multiple independently-authenticated Google Drive accounts to Claude",
+  "type": "module",
+  "main": "src/server.js",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "auth": "google-mcp-auth",
+    "accounts": "google-mcp-auth --list",
+    "start": "node src/server.js",
+    "test": "node --test tests/*.test.js",
+    "lint": "eslint src tests",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.7.0",
+    "google-mcp-accounts": "file:../google-mcp-accounts",
+    "googleapis": "^188.0.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.10"
+  }
+}
