@@ -12,7 +12,13 @@ import {
   createAuditLogger,
   statRegularFile,
 } from "google-mcp-accounts";
-import { createToolDefiner, jsonResult, aliasEnumHint, markUntrusted, UNTRUSTED_NOTICE } from "./mcp.js";
+import {
+  createToolDefiner,
+  jsonResult,
+  accountInstructions,
+  markUntrusted,
+  UNTRUSTED_NOTICE,
+} from "./mcp.js";
 import { FILES_DIR, resolveReadablePath, resolveWritablePath } from "./files.js";
 import {
   driveClientFor,
@@ -43,7 +49,10 @@ import {
   MAX_SHARE_MESSAGE_LENGTH,
 } from "./drive.js";
 
-const server = new McpServer({ name: "multi-gdrive-mcp", version: "1.0.0" });
+const server = new McpServer(
+  { name: "multi-gdrive-mcp", version: "1.0.0" },
+  { instructions: accountInstructions() }
+);
 
 // Shared ~/.google-mcp/audit.log, every line tagged with this server's name.
 const logAuditEvent = createAuditLogger("multi-gdrive-mcp");
@@ -122,7 +131,7 @@ defineTool(
 
 defineTool(
   "search_files",
-  `Search one account's Drive by name, full text, type, folder, or modified date. Unless the account granted drive.readonly, this only finds files these Google MCP servers created or opened - not everything in the Drive.${aliasEnumHint()}`,
+  `Search one account's Drive by name, full text, type, folder, or modified date. Unless the account granted drive.readonly, this only finds files these Google MCP servers created or opened - not everything in the Drive.`,
   {
     account: z.string(),
     name_contains: z.string().max(500).optional(),
@@ -168,7 +177,7 @@ defineTool(
 
 defineTool(
   "get_file_metadata",
-  `Get one file's details: name, type, size, owners, modified time, link, and who it's shared with.${aliasEnumHint()}`,
+  `Get one file's details: name, type, size, owners, modified time, link, and who it's shared with.`,
   { account: z.string(), file_id: fileId },
   async ({ account, file_id }) => {
     const info = getAccountInfo(account);
@@ -195,7 +204,7 @@ defineTool(
 
 defineTool(
   "download_file",
-  `Download a Drive file into the server's files folder (${FILES_DIR}); files can't be saved anywhere else. Google Docs/Sheets/Slides/Drawings are exported (export_format, default pdf). Up to ${MAX_DOWNLOAD_BYTES / 1024 / 1024}MB, counted on the actual bytes received.${aliasEnumHint()}`,
+  `Download a Drive file into the server's files folder (${FILES_DIR}); files can't be saved anywhere else. Google Docs/Sheets/Slides/Drawings are exported (export_format, default pdf). Up to ${MAX_DOWNLOAD_BYTES / 1024 / 1024}MB, counted on the actual bytes received.`,
   {
     account: z.string(),
     file_id: fileId,
@@ -259,7 +268,7 @@ defineTool(
 
 defineTool(
   "upload_file",
-  `Upload a file from the server's files folder (${FILES_DIR}) to Drive, up to ${MAX_UPLOAD_BYTES / 1024 / 1024}MB. Files anywhere else are refused. Without replace_file_id this always creates a NEW file and never overwrites anything. With replace_file_id it replaces that file's contents - that is a DRY RUN by default that shows what would be overwritten; pass confirm_overwrite: true only once that's been reviewed.${aliasEnumHint()}`,
+  `Upload a file from the server's files folder (${FILES_DIR}) to Drive, up to ${MAX_UPLOAD_BYTES / 1024 / 1024}MB. Files anywhere else are refused. Without replace_file_id this always creates a NEW file and never overwrites anything. With replace_file_id it replaces that file's contents - that is a DRY RUN by default that shows what would be overwritten; pass confirm_overwrite: true only once that's been reviewed.`,
   {
     account: z.string(),
     local_path: z.string().max(4096).describe(`File name (or path) inside ${FILES_DIR}`),
@@ -382,7 +391,7 @@ defineTool(
 
 defineTool(
   "create_folder",
-  `Create a new, empty folder in Drive (in My Drive, or inside parent_folder_id). Runs immediately - it doesn't touch anything that exists and notifies nobody. Under drive.file, a parent folder must be one these servers created.${aliasEnumHint()}`,
+  `Create a new, empty folder in Drive (in My Drive, or inside parent_folder_id). Runs immediately - it doesn't touch anything that exists and notifies nobody. Under drive.file, a parent folder must be one these servers created.`,
   {
     account: z.string(),
     name: z.string().max(MAX_NAME_LENGTH),
@@ -424,7 +433,7 @@ defineTool(
 
 defineTool(
   "rename_file",
-  `Rename a file or folder. Runs immediately and notifies nobody, but everyone with access sees the new name; the old name is returned so it can be put back. Only works on files these servers created.${aliasEnumHint()}`,
+  `Rename a file or folder. Runs immediately and notifies nobody, but everyone with access sees the new name; the old name is returned so it can be put back. Only works on files these servers created.`,
   { account: z.string(), file_id: fileId, new_name: z.string().max(MAX_NAME_LENGTH) },
   async ({ account, file_id, new_name }) => {
     const name = assertFileName(new_name);
@@ -464,7 +473,7 @@ defineTool(
 
 defineTool(
   "move_file",
-  `Move a file or folder into another folder (it is taken out of its current folder, not copied). Moving changes who can open it: everyone with access to the destination folder gains access, and access inherited from the old folder is lost. By default this is a DRY RUN that shows the file, the destination, and who has access to each; pass confirm_move: true only once that's been reviewed. Under drive.file, both the file and the destination folder must be ones these servers created.${aliasEnumHint()}`,
+  `Move a file or folder into another folder (it is taken out of its current folder, not copied). Moving changes who can open it: everyone with access to the destination folder gains access, and access inherited from the old folder is lost. By default this is a DRY RUN that shows the file, the destination, and who has access to each; pass confirm_move: true only once that's been reviewed. Under drive.file, both the file and the destination folder must be ones these servers created.`,
   {
     account: z.string(),
     file_id: fileId,
@@ -549,7 +558,7 @@ defineTool(
 
 defineTool(
   "move_to_trash",
-  `Move a file (or folder, with everything in it) to the Drive trash. Recoverable from Drive's Trash for 30 days. By default this is a DRY RUN that shows what would be trashed; pass confirm_trash: true to do it.${aliasEnumHint()}`,
+  `Move a file (or folder, with everything in it) to the Drive trash. Recoverable from Drive's Trash for 30 days. By default this is a DRY RUN that shows what would be trashed; pass confirm_trash: true to do it.`,
   {
     account: z.string(),
     file_id: fileId,
@@ -621,7 +630,7 @@ defineTool(
 
 defineTool(
   "share_file",
-  `Give one named person or Google group access to a file - treat this with the same care as sending an email: once they have it they can copy it, and by default Google emails them. By default this is a DRY RUN that shows the file, who already has access, and exactly what would be granted; pass confirm_share: true only once that's been reviewed and approved. Link sharing ("anyone with the link") and ownership transfer are deliberately not supported.${aliasEnumHint()}`,
+  `Give one named person or Google group access to a file - treat this with the same care as sending an email: once they have it they can copy it, and by default Google emails them. By default this is a DRY RUN that shows the file, who already has access, and exactly what would be granted; pass confirm_share: true only once that's been reviewed and approved. Link sharing ("anyone with the link") and ownership transfer are deliberately not supported.`,
   {
     account: z.string(),
     file_id: fileId,

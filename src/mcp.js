@@ -26,15 +26,18 @@ export function jsonResult(obj) {
   return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] };
 }
 
-export function aliasEnumHint() {
+// Which accounts the "account" argument accepts. Sent once, as the server's
+// instructions, instead of in every tool's description, where it cost about
+// 50 tokens per tool in every conversation.
+export function accountInstructions() {
   const aliases = getConnectedAliases();
   const described = aliases.map((alias) => {
     const { nicknames } = getAccountInfo(alias);
     return nicknames.length ? `${alias} (also: ${nicknames.join(", ")})` : alias;
   });
   return aliases.length
-    ? ` Connected aliases: ${described.join(", ")}. A nickname works anywhere an alias does.`
-    : " No accounts connected yet - run google-mcp-accounts' auth.js.";
+    ? `Every tool's "account" argument takes the alias or nickname of a connected account: ${described.join(", ")}. list_accounts also shows each account's email address.`
+    : "No accounts are connected yet - run google-mcp-accounts' auth.js.";
 }
 
 // Anyone can share a file with you, so file names and descriptions
